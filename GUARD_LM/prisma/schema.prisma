@@ -1,0 +1,163 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLIENT
+  ADMIN
+}
+
+enum MaliciousAction {
+  REJECT             @map("reject")
+  SANITIZE           @map("sanitize")
+  REJECT_WITH_REASON @map("reject_with_reason")
+}
+
+enum PromptStatus {
+  SAFE      @map("safe")
+  MALICIOUS @map("malicious")
+  SANITIZED @map("sanitized")
+}
+
+enum ActionTaken {
+  FORWARD            @map("forward")
+  REJECT             @map("reject")
+  SANITIZE           @map("sanitize")
+  REJECT_WITH_REASON @map("reject_with_reason")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  companyName  String   @map("company_name")
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(CLIENT)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  apiKeys          ApiKey[]
+  config           ClientConfig?
+  blacklistRules   BlacklistRule[]
+  regexRules       RegexRule[]
+  semanticExamples SemanticExample[]
+  promptLogs       PromptLog[]
+  subscriptions    Subscription[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  keyHash    String    @unique @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_keys")
+}
+
+model ClientConfig {
+  id                      String          @id @default(cuid())
+  userId                  String          @unique @map("user_id")
+  enableStaticAnalysis    Boolean         @default(true) @map("enable_static_analysis")
+  enableSemanticAnalysis  Boolean         @default(true) @map("enable_semantic_analysis")
+  enableLlmClassification Boolean         @default(true) @map("enable_llm_classification")
+  maliciousAction         MaliciousAction @default(REJECT) @map("malicious_action")
+  semanticThreshold       Float           @default(0.78) @map("semantic_threshold")
+  createdAt               DateTime        @default(now()) @map("created_at")
+  updatedAt               DateTime        @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("client_configs")
+}
+
+model BlacklistRule {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  phrase    String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("blacklist_rules")
+}
+
+model RegexRule {
+  id          String   @id @default(cuid())
+  userId      String   @map("user_id")
+  pattern     String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("regex_rules")
+}
+
+model SemanticExample {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  text      String
+  label     String   @default("malicious")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("semantic_examples")
+}
+
+model PromptLog {
+  id              String       @id @default(cuid())
+  userId          String       @map("user_id")
+  originalPrompt  String       @map("original_prompt")
+  sanitizedPrompt String?      @map("sanitized_prompt")
+  finalStatus     PromptStatus @map("final_status")
+  triggeredLayers Json         @default("[]") @map("triggered_layers")
+  actionTaken     ActionTaken  @map("action_taken")
+  violationReason String?      @map("violation_reason")
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("prompt_logs")
+}
+
+model Subscription {
+  id        String             @id @default(cuid())
+  userId    String             @map("user_id")
+  planName  String             @default("Free") @map("plan_name")
+  status    SubscriptionStatus @default(ACTIVE)
+  startDate DateTime           @default(now()) @map("start_date")
+  endDate   DateTime?          @map("end_date")
+  createdAt DateTime           @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("subscriptions")
+}
