@@ -3,26 +3,38 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { buttonClasses } from "@/components/ui/Button";
-import type { LayerName, PromptFinalStatus } from "@/types/analysis";
+import type { PromptFinalStatus } from "@/types/analysis";
 
 type PromptLogRow = {
   id: string;
   date: string;
   client: string;
   clientEmail: string;
+  apiKeyId?: string | null;
+  ruleId?: string | null;
+  ruleName?: string | null;
   originalPrompt: string;
   sanitizedPrompt: string | null;
   status: PromptFinalStatus;
-  triggeredLayers: LayerName[];
+  triggeredLayers: string[];
   actionTaken: string;
   violationReason: string | null;
 };
 
-export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
+export function LogsExplorer({ 
+  initialLogs,
+  apiKeys,
+  rules 
+}: { 
+  initialLogs: PromptLogRow[],
+  apiKeys: { id: string, maskedKey: string }[],
+  rules: { id: string, name: string }[]
+}) {
   const [logs, setLogs] = useState(initialLogs);
   const [filters, setFilters] = useState({
     status: "",
-    client: "",
+    apiKeyId: "",
+    ruleId: "",
     search: "",
     from: "",
     to: ""
@@ -51,7 +63,7 @@ export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
   }
 
   async function resetFilters() {
-    setFilters({ status: "", client: "", search: "", from: "", to: "" });
+    setFilters({ status: "", apiKeyId: "", ruleId: "", search: "", from: "", to: "" });
     setLoading(true);
     const response = await fetch("/api/logs");
     const payload = await response.json();
@@ -62,14 +74,14 @@ export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
   return (
     <div className="space-y-6">
       <form onSubmit={applyFilters} className="rounded-lg border border-line bg-field p-5">
-        <div className="grid gap-4 lg:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
           <label className="text-sm font-semibold text-cloud/70">
             Search
             <input
               value={filters.search}
               onChange={(event) => update("search", event.target.value)}
-              placeholder="Prompt or reason"
-              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint"
+              placeholder="Prompt..."
+              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint text-xs"
             />
           </label>
 
@@ -78,9 +90,9 @@ export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
             <select
               value={filters.status}
               onChange={(event) => update("status", event.target.value)}
-              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint"
+              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint text-xs"
             >
-              <option value="">All</option>
+              <option value="">All Status</option>
               <option value="safe">Safe</option>
               <option value="malicious">Malicious</option>
               <option value="sanitized">Sanitized</option>
@@ -88,13 +100,31 @@ export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
           </label>
 
           <label className="text-sm font-semibold text-cloud/70">
-            Client
-            <input
-              value={filters.client}
-              onChange={(event) => update("client", event.target.value)}
-              placeholder="Admin filter"
-              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint"
-            />
+            API Key
+            <select
+              value={filters.apiKeyId}
+              onChange={(event) => update("apiKeyId", event.target.value)}
+              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint text-xs"
+            >
+              <option value="">All Keys</option>
+              {apiKeys.map(k => (
+                <option key={k.id} value={k.id}>{k.maskedKey}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="text-sm font-semibold text-cloud/70">
+            Rule
+            <select
+              value={filters.ruleId}
+              onChange={(event) => update("ruleId", event.target.value)}
+              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint text-xs"
+            >
+              <option value="">All Rules</option>
+              {rules.map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
           </label>
 
           <label className="text-sm font-semibold text-cloud/70">
@@ -103,7 +133,7 @@ export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
               type="date"
               value={filters.from}
               onChange={(event) => update("from", event.target.value)}
-              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint"
+              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint text-xs"
             />
           </label>
 
@@ -113,7 +143,7 @@ export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
               type="date"
               value={filters.to}
               onChange={(event) => update("to", event.target.value)}
-              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint"
+              className="mt-2 w-full rounded-md border border-line bg-ink px-3 py-2 text-cloud outline-none focus:border-mint text-xs"
             />
           </label>
         </div>
@@ -139,9 +169,10 @@ export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
               <tr>
                 <th className="px-5 py-3">Date</th>
                 <th className="px-5 py-3">Client</th>
+                <th className="px-5 py-3">Rule</th>
                 <th className="px-5 py-3">Original prompt</th>
                 <th className="px-5 py-3">Status</th>
-                <th className="px-5 py-3">Triggered layer(s)</th>
+                <th className="px-5 py-3">Triggered tags</th>
                 <th className="px-5 py-3">Action taken</th>
                 <th className="px-5 py-3">Sanitized prompt</th>
               </tr>
@@ -163,15 +194,24 @@ export function LogsExplorer({ initialLogs }: { initialLogs: PromptLogRow[] }) {
                       <p className="font-semibold text-cloud/80">{log.client}</p>
                       <p className="mt-1 text-xs text-cloud/45">{log.clientEmail}</p>
                     </td>
+                    <td className="px-5 py-4 text-cloud/70 font-bold">
+                      {log.ruleName || "none"}
+                    </td>
                     <td className="max-w-sm px-5 py-4 text-cloud/75">{log.originalPrompt}</td>
                     <td className="px-5 py-4">
                       <Badge variant={log.status}>{log.status}</Badge>
                     </td>
                     <td className="px-5 py-4 text-cloud/65">
-                      {log.triggeredLayers.length ? log.triggeredLayers.join(", ") : "none"}
+                      <div className="flex flex-wrap gap-1">
+                        {log.triggeredLayers.length ? log.triggeredLayers.map((tag, i) => (
+                           <span key={i} className="text-[10px] bg-ember/10 text-ember/70 px-1 py-0.5 rounded uppercase font-black">
+                             {tag}
+                           </span>
+                        )) : "none"}
+                      </div>
                     </td>
-                    <td className="px-5 py-4 text-cloud/65">{log.actionTaken}</td>
-                    <td className="max-w-sm px-5 py-4 text-cloud/65">
+                    <td className="px-5 py-4 text-cloud/65 uppercase text-[10px] font-black">{log.actionTaken}</td>
+                    <td className="max-w-sm px-5 py-4 text-cloud/65 italic">
                       {log.sanitizedPrompt || "none"}
                     </td>
                   </tr>

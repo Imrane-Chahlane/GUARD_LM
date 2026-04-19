@@ -13,16 +13,15 @@ export async function GET() {
   return NextResponse.json({ apiKeys: await listApiKeys(user.id) });
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   const user = await getCurrentUser();
+  if (!user) return unauthorized();
 
-  if (!user) {
-    return unauthorized();
-  }
+  const body = await request.json().catch(() => ({}));
+  const { apiKey, rawKey } = await createApiKey(user.id, body.ruleIds || []);
 
-  const created = await createApiKey(user.id);
   return NextResponse.json({
-    apiKey: created.apiKey,
-    rawKey: created.rawKey
+    rawKey,
+    apiKey
   });
 }

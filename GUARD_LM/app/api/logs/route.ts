@@ -17,7 +17,9 @@ export async function GET(request: Request) {
     client: url.searchParams.get("client"),
     search: url.searchParams.get("search"),
     from: url.searchParams.get("from"),
-    to: url.searchParams.get("to")
+    to: url.searchParams.get("to"),
+    ruleId: url.searchParams.get("ruleId"),
+    apiKeyId: url.searchParams.get("apiKeyId")
   });
 
   return NextResponse.json({ logs });

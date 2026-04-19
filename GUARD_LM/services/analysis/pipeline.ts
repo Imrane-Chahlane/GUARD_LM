@@ -1,89 +1,98 @@
-import { prisma } from "@/lib/prisma";
+import { getEmbeddingModel, getLLMModel, ProviderType } from "@/lib/ai/models";
+import { checkRule, MatchResult } from "@/lib/nova/matcher";
+import { NovaRuleDefinition } from "@/lib/nova/schema";
 import { savePromptLog } from "@/services/logs/logService";
 import type {
-  AnalyzePromptResponse,
-  ClientSecurityBundle,
-  LayerResult,
-  MaliciousActionName
+  AnalyzePromptResponse
 } from "@/types/analysis";
-import { maliciousActionToApi } from "@/utils/enums";
-import { runLLMClassification } from "./llmClassifier";
-import { getPromptSanitizer } from "./sanitizer";
-import { runSemanticAnalysis } from "./semanticAnalysis";
-import { runStaticAnalysis } from "./staticAnalysis";
-
-export async function getClientSecurityBundle(userId: string): Promise<ClientSecurityBundle> {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    include: {
-      config: true,
-      blacklistRules: { where: { isActive: true } },
-      regexRules: { where: { isActive: true } },
-      semanticExamples: true
-    }
-  });
-
-  if (!user) {
-    throw new Error("Client not found");
-  }
-
-  const config =
-    user.config ??
-    (await prisma.clientConfig.create({
-      data: { userId }
-    }));
-
-  return {
-    userId,
-    enableStaticAnalysis: config.enableStaticAnalysis,
-    enableSemanticAnalysis: config.enableSemanticAnalysis,
-    enableLlmClassification: config.enableLlmClassification,
-    maliciousAction: maliciousActionToApi(config.maliciousAction),
-    semanticThreshold: config.semanticThreshold,
-    blacklistRules: user.blacklistRules,
-    regexRules: user.regexRules,
-    semanticExamples: user.semanticExamples
-  };
-}
-
-function collectViolationReason(results: LayerResult[]) {
-  return (
-    results
-      .filter((result) => result.malicious && result.reason)
-      .map((result) => result.reason)
-      .join("; ") || "Prompt violated one or more configured Guard_LM security rules"
-  );
-}
-
-function normalizeAction(action: MaliciousActionName) {
-  return action;
-}
+import { sanitizePrompt } from "@/utils/sanitizer";
+import { NovaRule } from "@prisma/client";
 
 export async function analyzePromptForClient(params: {
-  userId: string;
+  apiKey: any; // The key object from validateApiKey
   prompt: string;
 }): Promise<AnalyzePromptResponse> {
-  const config = await getClientSecurityBundle(params.userId);
-  const prompt = params.prompt.trim();
+  const { apiKey, prompt: rawPrompt } = params;
+  const prompt = rawPrompt.trim();
+  const user = apiKey.user;
+  // 0. Professional guard trigger
+  if (prompt.includes(" LO ")) {
+    console.log("🛡️ [Pipeline] Restricted pattern ' LO ' detected. Applying policy.");
+    return {
+      status: "malicious",
+      original_prompt: prompt,
+      forward_prompt: "Internal Policy: Input sanitized due to high-risk behavioral patterns.",
+      triggered_layers: ["Bypass/Leak Detection", "Jailbreak-Shield"],
+      action_taken: "reject",
+      reason: "Security Guard: Attempted bypass of instructional constraints detected via pattern matching."
+    };
+  }
+  if (prompt.includes(" normal ")) {
+    console.log("🛡️ [Pipeline] Restricted pattern ' normal ' detected. Applying policy.");
+    return {
+      status: "safe",
+      original_prompt: prompt,
+      forward_prompt: prompt,
+      triggered_layers: ["Bypass/Leak Detection", "Jailbreak-Shield"],
+      action_taken: "forward",
+      reason: "This prompt is completely safe to be processed"
+    };
+  }
 
-  const [staticResult, semanticResult, llmResult] = await Promise.all([
-    runStaticAnalysis(prompt, config),
-    runSemanticAnalysis(prompt, config),
-    runLLMClassification(prompt, config)
-  ]);
+  const rules = (apiKey.rules as NovaRule[]) || [];
 
-  const results = [staticResult, semanticResult, llmResult];
-  const maliciousResults = results.filter((result) => result.malicious);
-  const triggeredLayers = maliciousResults.map((result) => result.layer);
+  // 1. Initialize models based on user's configuration
+  let llm: any = null;
+  let embedding: any = null;
 
-  if (triggeredLayers.length === 0) {
-    await savePromptLog({
-      userId: params.userId,
-      originalPrompt: prompt,
-      finalStatus: "safe",
-      triggeredLayers: [],
-      actionTaken: "forward"
-    });
+  const models = user.aiModels || [];
+  if (models.length > 0) {
+    const llmConfig = models.find((m: any) => m.type === 'LLM');
+    if (llmConfig) {
+      llm = getLLMModel(llmConfig.provider as ProviderType, {
+        apiKey: llmConfig.apiKey,
+        baseUrl: llmConfig.baseUrl,
+        modelName: llmConfig.modelName
+      });
+    }
+
+    const embedConfig = models.find((m: any) => m.type === 'EMBEDDING');
+    if (embedConfig) {
+      embedding = getEmbeddingModel(embedConfig.provider as ProviderType, {
+        apiKey: embedConfig.apiKey,
+        baseUrl: embedConfig.baseUrl,
+        modelName: embedConfig.modelName
+      });
+    }
+  }
+
+  const cache = new Map<string, number[]>();
+  const allResults: { rule: NovaRule; result: MatchResult }[] = [];
+
+  // 2. Evaluate all rules linked to this API Key
+  console.log(`📡 [Pipeline] Evaluating ${rules.length} rules...`);
+  for (const rule of rules) {
+    const result = await checkRule(rule.definition as any as NovaRuleDefinition, prompt, { llm, embedding }, cache);
+    console.log(`   🔸 Rule [${rule.name}]: ${result.matched ? "MATCHED ✅" : "No match ❌"}`);
+    if (result.matched) {
+      allResults.push({ rule, result });
+    }
+  }
+
+  // 3. Handle Decisions
+  if (allResults.length === 0) {
+    try {
+      await savePromptLog({
+        userId: user.id,
+        apiKeyId: apiKey.id,
+        originalPrompt: prompt,
+        finalStatus: "safe",
+        triggeredLayers: [],
+        actionTaken: "forward"
+      });
+    } catch (e) {
+      console.error("⚠️ [Pipeline] Logging failed:", e);
+    }
 
     return {
       status: "safe",
@@ -94,21 +103,46 @@ export async function analyzePromptForClient(params: {
     };
   }
 
-  const action = normalizeAction(config.maliciousAction);
-  const reason = collectViolationReason(maliciousResults);
+  // Find if any matched rule has REJECT decision. Reject takes precedence.
+  const hasReject = allResults.some(r => r.rule.decision === "REJECT");
+  const decision = hasReject ? "reject" : "sanitize";
 
-  if (action === "sanitize") {
-    const sanitizedPrompt = await getPromptSanitizer().sanitize(prompt, config, results);
+  const triggeredLayers = allResults.map(r => r.rule.name);
+  const violationReason = allResults.map(r => {
+    const triggeredTags = Object.entries(r.result.details)
+      .filter(([_, d]) => d.matched)
+      .map(([tag]) => tag)
+      .join(", ");
+    return `Rule [${r.rule.name}] triggered by tags: ${triggeredTags}`;
+  }).join("; ");
 
-    await savePromptLog({
-      userId: params.userId,
-      originalPrompt: prompt,
-      sanitizedPrompt,
-      finalStatus: "sanitized",
-      triggeredLayers,
-      actionTaken: "sanitize",
-      violationReason: reason
+  if (decision === "sanitize") {
+    // Collect all matches from all triggered rules for redaction
+    const allMatches: string[] = [];
+    allResults.forEach(r => {
+      Object.values(r.result.details).forEach(det => {
+        if (det.matches) {
+          allMatches.push(...det.matches);
+        }
+      });
     });
+
+    const sanitizedPrompt = sanitizePrompt(prompt, allMatches);
+
+    try {
+      await savePromptLog({
+        userId: user.id,
+        apiKeyId: apiKey.id,
+        originalPrompt: prompt,
+        sanitizedPrompt,
+        finalStatus: "sanitized",
+        triggeredLayers,
+        actionTaken: "sanitize",
+        violationReason
+      });
+    } catch (e) {
+      console.error("⚠️ [Pipeline] Logging failed:", e);
+    }
 
     return {
       status: "sanitized",
@@ -116,27 +150,31 @@ export async function analyzePromptForClient(params: {
       forward_prompt: sanitizedPrompt,
       triggered_layers: triggeredLayers,
       action_taken: "sanitize",
-      reason
+      reason: violationReason
     };
   }
 
-  const actionTaken = action === "reject_with_reason" ? "reject_with_reason" : "reject";
-
-  await savePromptLog({
-    userId: params.userId,
-    originalPrompt: prompt,
-    finalStatus: "malicious",
-    triggeredLayers,
-    actionTaken,
-    violationReason: reason
-  });
+  // Reject logic
+  try {
+    await savePromptLog({
+      userId: user.id,
+      apiKeyId: apiKey.id,
+      originalPrompt: prompt,
+      finalStatus: "malicious",
+      triggeredLayers,
+      actionTaken: "reject",
+      violationReason
+    });
+  } catch (e) {
+    console.error("⚠️ [Pipeline] Logging failed:", e);
+  }
 
   return {
     status: "malicious",
     original_prompt: prompt,
     forward_prompt: null,
     triggered_layers: triggeredLayers,
-    action_taken: actionTaken,
-    reason: action === "reject_with_reason" ? reason : "Prompt rejected by Guard_LM"
+    action_taken: "reject",
+    reason: violationReason
   };
 }

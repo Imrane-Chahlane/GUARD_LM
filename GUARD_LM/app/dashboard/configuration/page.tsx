@@ -1,10 +1,10 @@
-import { ConfigForm } from "@/components/config/ConfigForm";
+import { NovaRuleManager } from "@/components/config/NovaRuleManager";
 import { requireUser } from "@/lib/auth/session";
-import { getClientSecurityBundle } from "@/services/analysis/pipeline";
+import { listNovaRules } from "@/services/nova/ruleService";
 
 export default async function ConfigurationPage() {
   const user = await requireUser();
-  const config = await getClientSecurityBundle(user.id);
+  const rules = await listNovaRules(user.id);
 
   return (
     <div className="space-y-8">
@@ -12,12 +12,12 @@ export default async function ConfigurationPage() {
         <p className="text-sm font-black uppercase text-mint">Configuration</p>
         <h1 className="mt-2 text-3xl font-black sm:text-4xl">Security rules</h1>
         <p className="mt-3 max-w-2xl text-cloud/60">
-          Tune phrase matching, regex patterns, semantic references, classifier usage, and
-          malicious prompt handling.
+          Define multiple security rules using keywords, semantic analysis, and AI classifiers. 
+          Link these rules to specific API keys to control protection levels across environments.
         </p>
       </section>
 
-      <ConfigForm initialConfig={config} />
+      <NovaRuleManager initialRules={rules} />
     </div>
   );
 }

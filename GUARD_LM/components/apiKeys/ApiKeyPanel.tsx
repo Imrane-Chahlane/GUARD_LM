@@ -10,13 +10,28 @@ type ApiKeyRecord = {
   isActive: boolean;
   createdAt: string | Date;
   revokedAt: string | Date | null;
+  rules?: { id: string, name: string }[];
 };
 
-export function ApiKeyPanel({ initialApiKeys }: { initialApiKeys: ApiKeyRecord[] }) {
+export function ApiKeyPanel({ 
+  initialApiKeys, 
+  availableRules 
+}: { 
+  initialApiKeys: ApiKeyRecord[],
+  availableRules: { id: string; name: string }[]
+}) {
   const [apiKeys, setApiKeys] = useState(initialApiKeys);
+  const [selectedRuleIds, setSelectedRuleIds] = useState<string[]>([]);
   const [newKey, setNewKey] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+
+  const toggleRule = (id: string) => {
+    setSelectedRuleIds(prev => 
+      prev.includes(id) ? prev.filter(r => r !== id) : [...prev, id]
+    );
+  };
 
   async function refreshKeys() {
     const response = await fetch("/api/api-keys");
@@ -27,7 +42,11 @@ export function ApiKeyPanel({ initialApiKeys }: { initialApiKeys: ApiKeyRecord[]
   async function generateKey() {
     setLoading(true);
     setStatus("");
-    const response = await fetch("/api/api-keys", { method: "POST" });
+    const response = await fetch("/api/api-keys", { 
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ruleIds: selectedRuleIds })
+    });
     const payload = await response.json();
 
     if (!response.ok) {
@@ -39,6 +58,37 @@ export function ApiKeyPanel({ initialApiKeys }: { initialApiKeys: ApiKeyRecord[]
     setNewKey(payload.rawKey);
     await refreshKeys();
     setLoading(false);
+    setSelectedRuleIds([]); // Reset selection
+  }
+
+  async function updateKeyRules(id: string, currentRuleIds: string[]) {
+    // Optimistic Update
+    const previousApiKeys = [...apiKeys];
+    setApiKeys(prev => prev.map(key => {
+      if (key.id === id) {
+        const updatedRules = availableRules.filter(r => currentRuleIds.includes(r.id));
+        return { ...key, rules: updatedRules };
+      }
+      return key;
+    }));
+
+    setUpdatingId(id);
+    try {
+      const response = await fetch(`/api/api-keys/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ruleIds: currentRuleIds })
+      });
+
+      if (!response.ok) {
+        throw new Error("Sync failed");
+      }
+    } catch (e) {
+      setApiKeys(previousApiKeys);
+      setStatus("Failed to sync rule changes. Please try again.");
+    } finally {
+      setUpdatingId(null);
+    }
   }
 
   async function revokeKey(id: string) {
@@ -72,6 +122,32 @@ export function ApiKeyPanel({ initialApiKeys }: { initialApiKeys: ApiKeyRecord[]
           </button>
         </div>
 
+        {/* Rule Selection Checklist */}
+        <div className="mt-6 space-y-3">
+          <label className="text-xs font-bold uppercase text-cloud/40 tracking-widest">
+            Rules to associate
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {availableRules.map((rule) => (
+              <button
+                key={rule.id}
+                type="button"
+                onClick={() => toggleRule(rule.id)}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all border ${
+                  selectedRuleIds.includes(rule.id)
+                    ? "bg-mint/20 border-mint text-mint"
+                    : "bg-ink border-line text-cloud/40 hover:text-cloud/60 hover:border-cloud/20"
+                }`}
+              >
+                {rule.name}
+              </button>
+            ))}
+            {availableRules.length === 0 && (
+              <p className="text-sm text-cloud/30 italic">No rules available. Create one in the Configuration tab.</p>
+            )}
+          </div>
+        </div>
+
         {newKey ? (
           <div className="mt-5 rounded-lg border border-mint/40 bg-mint/10 p-4">
             <p className="text-sm font-bold uppercase text-mint">New key shown once</p>
@@ -95,7 +171,7 @@ export function ApiKeyPanel({ initialApiKeys }: { initialApiKeys: ApiKeyRecord[]
             <thead className="bg-ink text-xs uppercase text-cloud/50">
               <tr>
                 <th className="px-5 py-3">Masked key</th>
-                <th className="px-5 py-3">Prefix</th>
+                <th className="px-5 py-3">Rules</th>
                 <th className="px-5 py-3">Created</th>
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3">Action</th>
@@ -112,7 +188,38 @@ export function ApiKeyPanel({ initialApiKeys }: { initialApiKeys: ApiKeyRecord[]
                 apiKeys.map((key) => (
                   <tr key={key.id}>
                     <td className="px-5 py-4 font-mono text-cloud/80">{key.maskedKey}</td>
-                    <td className="px-5 py-4 text-cloud/60">{key.keyPrefix}</td>
+                    <td className="px-5 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {availableRules.map(rule => {
+                          const isAssociated = (key.rules || []).some(r => r.id === rule.id);
+                          return (
+                            <button
+                              key={rule.id}
+                              onClick={() => {
+                                const latestKey = apiKeys.find(k => k.id === key.id);
+                                const currentRules = latestKey?.rules || [];
+                                const isAssociated = currentRules.some(r => r.id === rule.id);
+                                const newIds = isAssociated
+                                  ? currentRules.filter(r => r.id !== rule.id).map(r => r.id)
+                                  : [...currentRules.map(r => r.id), rule.id];
+                                updateKeyRules(key.id, newIds);
+                              }}
+                              disabled={updatingId === key.id || !key.isActive}
+                              className={`text-[10px] border px-1.5 py-0.5 rounded transition ${
+                                (key.rules || []).some(r => r.id === rule.id)
+                                  ? "bg-mint/10 border-mint/30 text-mint"
+                                  : "bg-ink border-line text-cloud/20 hover:text-cloud/40 hover:border-cloud/30"
+                              }`}
+                            >
+                              {rule.name}
+                            </button>
+                          );
+                        })}
+                        {availableRules.length === 0 && (
+                          <span className="text-[10px] text-cloud/30 italic">No rules available</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-5 py-4 text-cloud/60">
                       {new Date(key.createdAt).toLocaleString()}
                     </td>

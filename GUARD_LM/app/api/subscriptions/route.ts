@@ -6,7 +6,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 const subscriptionSchema = z.object({
-  planName: z.enum(["Free", "Pro", "Enterprise"])
+  planName: z.enum(["Free", "PAYG"])
 });
 
 export async function GET() {

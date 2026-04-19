@@ -20,13 +20,19 @@ export function maskApiKey(prefix: string) {
   return `${prefix}_************************`;
 }
 
-export async function createApiKey(userId: string) {
+export async function createApiKey(userId: string, ruleIds: string[] = []) {
   const rawKey = generateRawApiKey();
   const apiKey = await prisma.apiKey.create({
     data: {
       userId,
       keyHash: hashApiKey(rawKey),
-      keyPrefix: getApiKeyPrefix(rawKey)
+      keyPrefix: getApiKeyPrefix(rawKey),
+      rules: {
+        connect: ruleIds.map(id => ({ id }))
+      }
+    },
+    include: {
+      rules: true
     }
   });
 
@@ -38,7 +44,8 @@ export async function createApiKey(userId: string) {
       maskedKey: maskApiKey(apiKey.keyPrefix),
       isActive: apiKey.isActive,
       createdAt: apiKey.createdAt,
-      revokedAt: apiKey.revokedAt
+      revokedAt: apiKey.revokedAt,
+      rules: apiKey.rules
     }
   };
 }
@@ -46,6 +53,9 @@ export async function createApiKey(userId: string) {
 export async function listApiKeys(userId: string) {
   const keys = await prisma.apiKey.findMany({
     where: { userId },
+    include: {
+      rules: true
+    },
     orderBy: { createdAt: "desc" }
   });
 
@@ -55,7 +65,8 @@ export async function listApiKeys(userId: string) {
     maskedKey: maskApiKey(key.keyPrefix),
     isActive: key.isActive,
     createdAt: key.createdAt,
-    revokedAt: key.revokedAt
+    revokedAt: key.revokedAt,
+    rules: key.rules
   }));
 }
 
@@ -77,6 +88,28 @@ export async function revokeApiKey(userId: string, apiKeyId: string) {
   });
 }
 
+export async function updateApiKeyRules(userId: string, apiKeyId: string, ruleIds: string[]) {
+  const existing = await prisma.apiKey.findFirst({
+    where: { id: apiKeyId, userId }
+  });
+
+  if (!existing) {
+    return null;
+  }
+
+  return prisma.apiKey.update({
+    where: { id: apiKeyId },
+    data: {
+      rules: {
+        set: ruleIds.map(id => ({ id }))
+      }
+    },
+    include: {
+      rules: true
+    }
+  });
+}
+
 export async function validateApiKey(rawApiKey: string) {
   const keyHash = hashApiKey(rawApiKey);
 
@@ -85,12 +118,10 @@ export async function validateApiKey(rawApiKey: string) {
     include: {
       user: {
         include: {
-          config: true,
-          blacklistRules: { where: { isActive: true } },
-          regexRules: { where: { isActive: true } },
-          semanticExamples: true
+          aiModels: true
         }
-      }
+      },
+      rules: true
     }
   });
 

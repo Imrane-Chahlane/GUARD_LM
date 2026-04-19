@@ -3,13 +3,19 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum Role {
   CLIENT
   ADMIN
+}
+
+enum RuleDecision {
+  REJECT   @map("reject")
+  SANITIZE @map("sanitize")
 }
 
 enum MaliciousAction {
@@ -38,6 +44,11 @@ enum SubscriptionStatus {
   CANCELED
 }
 
+enum AiModelType {
+  EMBEDDING
+  LLM
+}
+
 model User {
   id           String   @id @default(cuid())
   name         String
@@ -50,6 +61,8 @@ model User {
 
   apiKeys          ApiKey[]
   config           ClientConfig?
+  novaRules        NovaRule[]
+  aiModels         AiModel[]
   blacklistRules   BlacklistRule[]
   regexRules       RegexRule[]
   semanticExamples SemanticExample[]
@@ -60,15 +73,16 @@ model User {
 }
 
 model ApiKey {
-  id         String    @id @default(cuid())
-  userId     String    @map("user_id")
-  keyHash    String    @unique @map("key_hash")
-  keyPrefix  String    @map("key_prefix")
-  isActive   Boolean   @default(true) @map("is_active")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  revokedAt  DateTime? @map("revoked_at")
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  keyHash   String    @unique @map("key_hash")
+  keyPrefix String    @map("key_prefix")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  revokedAt DateTime? @map("revoked_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rules NovaRule[] @relation("ApiKeyToNovaRule")
 
   @@index([userId])
   @@map("api_keys")
@@ -88,6 +102,40 @@ model ClientConfig {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("client_configs")
+}
+
+model NovaRule {
+  id         String       @id @default(cuid())
+  userId     String       @map("user_id")
+  name       String
+  definition Json         @map("definition") // JSON structure for keywords, semantics, llm
+  decision   RuleDecision @default(REJECT)
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeys ApiKey[]    @relation("ApiKeyToNovaRule")
+  logs    PromptLog[]
+
+  @@index([userId])
+  @@map("nova_rules")
+}
+
+model AiModel {
+  id        String      @id @default(cuid())
+  userId    String      @map("user_id")
+  type      AiModelType @default(LLM)
+  provider  String // openai, google, anthropic, openai-compatible
+  apiKey    String      @map("api_key")
+  baseUrl   String?     @map("base_url")
+  modelName String      @map("model_name")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, type])
+  @@index([userId])
+  @@map("ai_models")
 }
 
 model BlacklistRule {
@@ -133,6 +181,8 @@ model SemanticExample {
 model PromptLog {
   id              String       @id @default(cuid())
   userId          String       @map("user_id")
+  apiKeyId        String?      @map("api_key_id")
+  ruleId          String?      @map("rule_id")
   originalPrompt  String       @map("original_prompt")
   sanitizedPrompt String?      @map("sanitized_prompt")
   finalStatus     PromptStatus @map("final_status")
@@ -141,9 +191,12 @@ model PromptLog {
   violationReason String?      @map("violation_reason")
   createdAt       DateTime     @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rule NovaRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
+  @@index([apiKeyId])
+  @@index([ruleId])
   @@map("prompt_logs")
 }
 

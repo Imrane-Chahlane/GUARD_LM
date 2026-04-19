@@ -10,16 +10,20 @@ import type { ActionTakenName, LayerName, PromptFinalStatus } from "@/types/anal
 
 export async function savePromptLog(params: {
   userId: string;
+  apiKeyId?: string | null;
+  ruleId?: string | null;
   originalPrompt: string;
   sanitizedPrompt?: string | null;
   finalStatus: PromptFinalStatus;
-  triggeredLayers: LayerName[];
+  triggeredLayers: string[];
   actionTaken: ActionTakenName;
   violationReason?: string | null;
 }) {
   return prisma.promptLog.create({
     data: {
       userId: params.userId,
+      apiKeyId: params.apiKeyId || null,
+      ruleId: params.ruleId || null,
       originalPrompt: params.originalPrompt,
       sanitizedPrompt: params.sanitizedPrompt || null,
       finalStatus: promptStatusToPrisma(params.finalStatus),
@@ -37,11 +41,21 @@ export async function listPromptLogs(params: {
   search?: string | null;
   from?: string | null;
   to?: string | null;
+  apiKeyId?: string | null;
+  ruleId?: string | null;
 }) {
   const where: Prisma.PromptLogWhereInput = {};
 
   if (params.user.role !== Role.ADMIN) {
     where.userId = params.user.id;
+  }
+
+  if (params.apiKeyId) {
+    where.apiKeyId = params.apiKeyId;
+  }
+
+  if (params.ruleId) {
+    where.ruleId = params.ruleId;
   }
 
   if (params.status && ["safe", "malicious", "sanitized"].includes(params.status)) {
@@ -87,6 +101,11 @@ export async function listPromptLogs(params: {
           companyName: true,
           email: true
         }
+      },
+      rule: {
+        select: {
+          name: true
+        }
       }
     },
     orderBy: { createdAt: "desc" },
@@ -98,11 +117,14 @@ export async function listPromptLogs(params: {
     date: log.createdAt,
     client: log.user.companyName,
     clientEmail: log.user.email,
+    apiKeyId: log.apiKeyId,
+    ruleId: log.ruleId,
+    ruleName: log.rule?.name,
     originalPrompt: log.originalPrompt,
     sanitizedPrompt: log.sanitizedPrompt,
     status: promptStatusToApi(log.finalStatus),
     triggeredLayers: Array.isArray(log.triggeredLayers)
-      ? (log.triggeredLayers as LayerName[])
+      ? (log.triggeredLayers as string[])
       : [],
     actionTaken: actionTakenToApi(log.actionTaken),
     violationReason: log.violationReason

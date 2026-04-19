@@ -1,4 +1,4 @@
-export type LayerName = "static" | "semantic" | "llm";
+export type LayerName = string; // Supports "static", "semantic", "llm" and custom rule names
 export type MaliciousActionName = "reject" | "sanitize" | "reject_with_reason";
 export type PromptFinalStatus = "safe" | "malicious" | "sanitized";
 export type ActionTakenName = "forward" | "reject" | "sanitize" | "reject_with_reason";

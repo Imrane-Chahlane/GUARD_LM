@@ -7,6 +7,7 @@ import { cn } from "@/utils/cn";
 const baseNavItems = [
   { href: "/dashboard", label: "Overview" },
   { href: "/dashboard/configuration", label: "Configuration" },
+  { href: "/dashboard/models", label: "AI Models" },
   { href: "/dashboard/api-keys", label: "API keys" },
   { href: "/dashboard/logs", label: "Logs" },
   { href: "/dashboard/pricing", label: "Pricing" },
